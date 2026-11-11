@@ -81,6 +81,8 @@ button{font:inherit; color:inherit}
 .badge.on{display:block}
 .stack{display:flex; flex-direction:column; gap:10px}
 .empty{margin:6px 0; color:var(--ink-2); font-size:13px}
+.bay{display:flex; justify-content:space-between; align-items:center; border:2px dashed rgba(20,32,43,.35); padding:10px 12px; font:600 12px var(--f-mono); letter-spacing:.06em; text-transform:uppercase; color:var(--ink-2)}
+.bay em{font-style:normal; font-weight:500}
 
 .truck,.order{position:relative; background:var(--paper); border:2px solid var(--ink); padding:8px 10px 8px; box-shadow:3px 3px 0 rgba(20,32,43,.85)}
 .t-top,.o-top{display:flex; align-items:center; gap:8px; margin-bottom:8px; font:600 12px var(--f-mono); letter-spacing:.04em; text-transform:uppercase; min-width:0}
@@ -186,12 +188,17 @@ button:focus-visible{outline:3px solid var(--red); outline-offset:2px}
   .brand .l1{font-size:13px}
   .brand .l2{font-size:30px}
   .ctrl{order:2}
-  .stats{order:3; width:100%; flex:none; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px}
+  .stats{order:3; width:100%; flex:none; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px}
   .stat{min-width:0}
-  .stat b{font-size:24px}
+  .stat b{font-size:20px}
+  .stat label{font-size:9px; letter-spacing:.06em}
   .rep-bar{width:100%}
   .panel{padding:22px 16px 18px}
   .panel h1{font-size:44px}
+}
+@media (max-width:520px){
+  .stats{gap:8px 14px}
+  .stat label{font-size:9px; letter-spacing:.06em}
 }
 @media (prefers-reduced-motion:reduce){
   .order.urgent{animation:none; outline:3px solid var(--red)}
@@ -208,6 +215,7 @@ button:focus-visible{outline:3px solid var(--red); outline-offset:2px}
       <div class="stat cash"><label>Cash</label><b id="v-cash">$500</b></div>
       <div class="stat"><label>Reputation</label><b id="v-rep">80</b><div class="rep-bar"><i id="b-rep"></i></div></div>
       <div class="stat"><label>Shift <span id="v-round">1</span></label><b id="v-time">1:15</b></div>
+      <div class="stat"><label>Crates</label><b id="v-q">0/8</b><div class="rep-bar"><i id="b-q" style="width:0"></i></div></div>
       <div class="stat"><label>Service</label><b id="v-svc">-</b></div>
     </div>
     <div class="ctrl">
@@ -218,7 +226,7 @@ button:focus-visible{outline:3px solid var(--red); outline-offset:2px}
   </header>
   <div class="ticker" id="ticker"><span class="live">LIVE</span><span class="msg" id="tick-msg"></span></div>
   <main class="floor">
-    <section class="zone z-in"><h2><span>Inbound dock</span></h2><span class="badge" id="bd-in"></span><div id="trucks" class="stack"></div></section>
+    <section class="zone z-in"><h2><span>Inbound dock</span><small id="dock-cap"></small></h2><span class="badge" id="bd-in"></span><div id="trucks" class="stack"></div></section>
     <section class="zone z-st"><h2><span>Storage</span><small id="cap">0/12</small></h2><span class="badge" id="bd-st"></span><div id="slots" class="slots"></div></section>
     <section class="zone z-out"><h2><span>Outbound orders</span></h2><span class="badge" id="bd-out"></span><div id="orders" class="stack"></div></section>
   </main>
@@ -244,7 +252,9 @@ const ITEMS = {
 };
 const TYPES = Object.keys(ITEMS);
 const COST_RATE = 0.5;
-const ROUND_LEN = 75;
+const roundLen = n => n >= 8 ? 90 : n >= 5 ? 85 : 80;
+const quotaFor = n => Math.min(50, 5 + 3 * n);
+const dockCount = n => n >= 12 ? 5 : n >= 8 ? 4 : 2;
 const cost = t => Math.round(ITEMS[t].price * COST_RATE);
 const KIND = { express: 'Express', standard: 'Standard', bulk: 'Bulk' };
 const MULT = { express: 1.6, standard: 1, bulk: 0.9 };
@@ -273,21 +283,22 @@ const TIPS = [
   'Produce and dairy age on your shelves. Ship the oldest first.',
   'Express orders pay 60% more but run out fast.',
   'A spoiled crate keeps its slot until you tap it to dump it.',
-  'Service level is the share of orders you shipped on time.'
+  'Service level is the share of orders you shipped on time.',
+  'Hit the crate quota in the top bar or you replay the shift.'
 ];
 
 /* ---------- State ---------- */
 let S, dirty = true, drag = null, justDragged = false, muted = false;
 function fresh() {
   return {
-    phase: 'title', paused: false, round: 0, t: ROUND_LEN,
+    phase: 'title', paused: false, round: 0, len: 80, t: 80, quota: 8, retries: 0, snap: '',
     cash: 500, rep: 80,
     slots: Array(12).fill(null), trucks: [], orders: [],
     nextTruck: 1, nextOrder: 0.3, idc: 1, truckNo: 1, orderNo: 1, shortsLeft: 0,
     up: { rack: 0, dock: 0, fork: 0, cold: 0, fcast: 0 },
     plan: [], nextPlan: [], msg: null, selected: null,
     stats: { shipped: 0, late: 0, units: 0, revenue: 0, stockouts: 0, spoiled: 0, rounds: 0, stockSum: 0, stockTime: 0 },
-    r: { shipped: 0, late: 0, revenue: 0, rep0: 80 }
+    r: { shipped: 0, late: 0, revenue: 0, rep0: 80, units: 0, met: false }
   };
 }
 S = fresh();
@@ -363,12 +374,14 @@ function spawnTruck() {
   const w = weights(), crates = [];
   for (let i = 0; i < n; i++) crates.push({ id: S.idc++, type: wpick(w), age: 0, spoiled: false });
   const win = 20 * (S.up.fork ? 1.4 : 1) * (has('rain') ? 0.5 : 1);
-  S.trucks.push({ id: S.truckNo++, sup: pick(SUPPLIERS), crates, t: win, tMax: win });
+  let dock = 0; while (S.trucks.some(t => t.dock === dock)) dock++;
+  S.trucks.push({ id: S.truckNo++, dock, sup: pick(SUPPLIERS), crates, t: win, tMax: win });
   sfx.truck(); dirty = true;
 }
 function truckInterval() {
   let v = 10 - Math.min(2, S.round * 0.2);
   if (has('strike')) v *= 2;
+  v *= Math.sqrt(2 / dockCount(S.round));
   return v * (0.8 + Math.random() * 0.4);
 }
 function spawnOrder() {
@@ -394,7 +407,8 @@ function completeOrder(o) {
   o.done = true; o.doneT = 0.9;
   S.cash += o.pay; S.rep = Math.min(100, S.rep + 2);
   S.stats.shipped++; S.stats.units += o.needs.length; S.stats.revenue += o.pay;
-  S.r.shipped++; S.r.revenue += o.pay;
+  S.r.shipped++; S.r.revenue += o.pay; S.r.units += o.needs.length;
+  if (S.r.units >= S.quota && !S.r.met) { S.r.met = true; announce('Quota met: ' + S.quota + ' crates delivered. Keep shipping for revenue.', 'good'); }
   floatFx('+' + money(o.pay), 'good', document.querySelector('[data-oid="' + o.id + '"]'));
   sfx.ship(); dirty = true;
 }
@@ -484,14 +498,27 @@ function dumpCrate(i) {
 
 /* ---------- Round flow ---------- */
 function startRound() {
-  S.round++; S.t = ROUND_LEN; S.plan = S.nextPlan; S.nextPlan = [];
+  S.snap = JSON.stringify({ cash: S.cash, rep: S.rep, slots: S.slots, up: S.up, stats: S.stats, nextPlan: S.nextPlan, round: S.round });
+  S.round++; S.len = roundLen(S.round); S.t = S.len; S.quota = quotaFor(S.round);
+  S.plan = S.nextPlan; S.nextPlan = [];
   S.trucks = []; S.orders = []; S.nextTruck = 1.2; S.nextOrder = 0.3; S.shortsLeft = 0;
-  S.selected = null; S.msg = null; S.r = { shipped: 0, late: 0, revenue: 0, rep0: S.rep };
+  S.selected = null; S.msg = null; S.r = { shipped: 0, late: 0, revenue: 0, rep0: S.rep, units: 0, met: false };
+  const nd = dockCount(S.round) - dockCount(S.round - 1);
+  announce(nd > 0 ? 'New inbound docks open: ' + dockCount(S.round) + ' trucks can unload at once. Deliver ' + S.quota + ' crates.'
+                  : 'Shift ' + S.round + ': deliver ' + S.quota + ' crates to move on.', nd > 0 ? 'good' : '');
   S.phase = 'play'; S.paused = false; dirty = true; syncOverlay();
 }
 function endRound() {
-  S.stats.rounds++; S.phase = 'shop'; S.nextPlan = makePlan(S.round + 1);
-  S.trucks = []; S.orders = []; S.plan = []; S.selected = null; dirty = true; syncOverlay();
+  S.trucks = []; S.orders = []; S.plan = []; S.selected = null;
+  if (S.r.units >= S.quota) { S.stats.rounds++; S.phase = 'shop'; S.nextPlan = makePlan(S.round + 1); }
+  else S.phase = 'fail';
+  dirty = true; syncOverlay();
+}
+function retryRound() {
+  const sn = JSON.parse(S.snap);
+  S.cash = sn.cash; S.rep = sn.rep; S.slots = sn.slots; S.up = sn.up; S.stats = sn.stats; S.nextPlan = sn.nextPlan; S.round = sn.round;
+  S.retries++;
+  startRound();
 }
 function score() { return S.stats.revenue + 250 * S.stats.rounds; }
 function gameOver() {
@@ -508,7 +535,7 @@ function startRoundFromFresh() { S.nextPlan = makePlan(1); startRound(); }
 /* ---------- Simulation ---------- */
 function step(dt) {
   S.t -= dt;
-  const el = ROUND_LEN - S.t;
+  const el = S.len - S.t;
   if (S.msg) { S.msg.left -= dt; if (S.msg.left <= 0) S.msg = null; }
 
   for (const p of S.plan) {
@@ -531,7 +558,7 @@ function step(dt) {
   });
   if (S.trucks.length !== before) dirty = true;
   S.nextTruck -= dt;
-  if (S.nextTruck <= 0 && S.trucks.length < 2) { spawnTruck(); S.nextTruck = truckInterval(); }
+  if (S.nextTruck <= 0 && S.trucks.length < dockCount(S.round)) { spawnTruck(); S.nextTruck = truckInterval(); }
 
   S.nextOrder -= dt;
   if (S.nextOrder <= 0 && S.orders.filter(o => !o.done).length < maxOrders()) { spawnOrder(); S.nextOrder = orderInterval(); }
@@ -572,7 +599,7 @@ function crateHTML(c, src, price) {
 }
 function truckHTML(t) {
   const cr = t.crates.map((c, i) => c ? crateHTML(c, { kind: 'truck', tid: t.id, i }, true) : '').join('');
-  return '<article class="truck"><div class="t-top"><span>Truck #' + t.id + '</span><span class="sup">' + t.sup + '</span>' +
+  return '<article class="truck"><div class="t-top"><span>Dock ' + (t.dock + 1) + ' #' + t.id + '</span><span class="sup">' + t.sup + '</span>' +
     '<button class="mini-btn" type="button" data-unload="' + t.id + '">Unload all</button></div>' +
     '<div class="tcrates">' + cr + '</div>' +
     '<div class="o-bot"><div class="tbar"><i data-ttimer="' + t.id + '"></i></div><span class="sec" data-tsec="' + t.id + '"></span></div></article>';
@@ -587,7 +614,10 @@ function orderHTML(o) {
     '<div class="o-bot"><div class="tbar"><i data-otimer="' + o.id + '"></i></div><span class="sec" data-osec="' + o.id + '"></span></div></article>';
 }
 function renderStructure() {
-  $('#trucks').innerHTML = S.trucks.length ? S.trucks.map(truckHTML).join('') : '<p class="empty">No trucks at the dock. The next one is on its way.</p>';
+  $('#trucks').innerHTML = Array.from({ length: dockCount(Math.max(1, S.round)) }, (_, d) => {
+    const t = S.trucks.find(t => t.dock === d);
+    return t ? truckHTML(t) : '<div class="bay"><span>Dock ' + (d + 1) + '</span><em>free</em></div>';
+  }).join('');
   $('#slots').innerHTML = S.slots.map((c, i) =>
     '<div class="slot' + (c ? '' : ' empty') + '" data-drop="slot" data-i="' + i + '">' + (c ? crateHTML(c, { kind: 'slot', i }) : '') + '</div>').join('');
   $('#orders').innerHTML = S.orders.length ? S.orders.map(orderHTML).join('') : '<p class="empty">Waiting for the first order.</p>';
@@ -618,6 +648,11 @@ function updateDynamic() {
   setText($('#v-time'), Math.floor(tl / 60) + ':' + String(tl % 60).padStart(2, '0'));
   const tot = S.stats.shipped + S.stats.late;
   setText($('#v-svc'), tot ? Math.round(100 * S.stats.shipped / tot) + '%' : '-');
+  const qb = $('#b-q');
+  setText($('#v-q'), S.r.units + '/' + S.quota);
+  qb.style.width = Math.min(100, 100 * S.r.units / S.quota) + '%';
+  qb.style.background = S.r.units >= S.quota ? 'var(--green)' : 'var(--tape)';
+  setText($('#dock-cap'), S.trucks.length + '/' + dockCount(Math.max(1, S.round)) + ' docks');
   const used = S.slots.filter(Boolean).length, cap = $('#cap');
   setText(cap, used + '/' + S.slots.length); cap.classList.toggle('full', used >= S.slots.length);
 
@@ -656,7 +691,7 @@ function updateDynamic() {
     text = d.name.toUpperCase() + ': ' + d.text + (act.id === 'shorts' ? ' (' + S.shortsLeft + ' left)' : '') + ' ' + Math.ceil(act.left) + 's';
   } else if (S.msg) { kind = S.msg.kind; text = S.msg.text; }
   else if (S.phase !== 'play') text = 'Shift ' + (S.round || 1) + ' standing by.';
-  else text = TIPS[Math.floor((ROUND_LEN - S.t) / 9) % TIPS.length];
+  else text = TIPS[Math.floor((S.len - S.t) / 9) % TIPS.length];
   setText($('#tick-msg'), text);
   tk.className = 'ticker' + (kind ? ' ' + kind : '');
 }
@@ -669,6 +704,10 @@ function forecastHTML() {
   if (!S.nextPlan.length) return '<div class="fc">Forecast: calm shift. No disruptions expected.</div>';
   return '<div class="fc">Forecast for shift ' + (S.round + 1) + ': ' + S.nextPlan.map(p => '<b>' + DIS[p.id].name + '</b> at about ' + p.at + 's').join(', ') + '.</div>';
 }
+function nextHTML() {
+  const n = S.round + 1, d = dockCount(n), dp = dockCount(S.round);
+  return '<div class="fc">Shift ' + n + ': deliver <b>' + quotaFor(n) + ' crates</b> in ' + roundLen(n) + ' seconds. Inbound docks: ' + d + (d > dp ? ' (' + (d - dp) + ' new)' : '') + '.</div>';
+}
 function overlayHTML() {
   if (S.phase === 'title') {
     const b = bestScore();
@@ -677,12 +716,21 @@ function overlayHTML() {
       '<ul class="how">' +
       '<li><b>1</b><span>Move crates from inbound trucks into storage. Each crate you take costs cash.</span></li>' +
       '<li><b>2</b><span>Drag crates onto an order, or tap a crate and then tap the order. Fill every slot before the timer ends.</span></li>' +
-      '<li><b>3</b><span>Produce and dairy spoil on the shelf. Late orders cost reputation. At zero, you are out.</span></li></ul>' +
+      '<li><b>3</b><span>Produce and dairy spoil on the shelf. Deliver the crate quota each shift or replay it. Late orders cost reputation, and at zero you are out.</span></li></ul>' +
       '<div class="row"><button class="btn" type="button" id="btn-start">Start shift 1</button>' +
       (b ? '<span class="sub">Best score ' + b.toLocaleString('en-US') + '</span>' : '') + '</div>';
   }
   if (S.phase === 'play' && S.paused) {
     return '<h2>Paused</h2><p class="sub">Shift ' + S.round + '</p><div class="row"><button class="btn" type="button" id="btn-resume">Resume</button><button class="btn sec2" type="button" id="btn-restart">Restart run</button></div>';
+  }
+  if (S.phase === 'fail') {
+    const r = S.r;
+    return '<h2>Shift ' + S.round + ' missed the quota</h2>' +
+      '<p>You delivered ' + r.units + ' of ' + S.quota + ' crates. Cash, reputation, shelves and upgrades go back to how they were when the shift started.</p>' +
+      '<div class="tiles"><div class="tile"><label>Crates delivered</label><b>' + r.units + ' / ' + S.quota + '</b></div>' +
+      '<div class="tile"><label>Orders shipped</label><b>' + r.shipped + '</b></div><div class="tile"><label>Late</label><b>' + r.late + '</b></div></div>' +
+      '<div class="row"><button class="btn" type="button" id="btn-retry">Try shift ' + S.round + ' again</button>' +
+      '<button class="btn sec2" type="button" id="btn-restart">Restart run</button></div>';
   }
   if (S.phase === 'shop') {
     const r = S.r, svc = r.shipped + r.late ? Math.round(100 * r.shipped / (r.shipped + r.late)) : 100;
@@ -693,10 +741,10 @@ function overlayHTML() {
         '<button class="btn" type="button" data-buy="' + u.id + '"' + (can ? '' : ' disabled') + '>' + (maxed ? 'Maxed' : money(c)) + '</button></div>';
     }).join('');
     return '<h2>Shift ' + S.round + ' complete</h2><p class="sub">Cash ' + money(S.cash) + ' / Reputation ' + Math.round(S.rep) + '</p>' +
-      '<div class="tiles"><div class="tile"><label>Shipped</label><b>' + r.shipped + '</b></div><div class="tile"><label>Late</label><b>' + r.late + '</b></div>' +
+      '<div class="tiles"><div class="tile"><label>Crates delivered</label><b>' + r.units + ' / ' + S.quota + '</b></div><div class="tile"><label>Orders shipped</label><b>' + r.shipped + '</b></div><div class="tile"><label>Late</label><b>' + r.late + '</b></div>' +
       '<div class="tile"><label>Service</label><b>' + svc + '%</b></div><div class="tile"><label>Revenue</label><b>' + money(r.revenue) + '</b></div>' +
       '<div class="tile"><label>Reputation</label><b>' + (dRep >= 0 ? '+' : '') + dRep + '</b></div></div>' +
-      '<h2 style="font-size:28px;margin-top:6px">Upgrades</h2>' + ups + forecastHTML() +
+      '<h2 style="font-size:28px;margin-top:6px">Upgrades</h2>' + ups + forecastHTML() + nextHTML() +
       '<div class="row"><button class="btn" type="button" id="btn-next">Start shift ' + (S.round + 1) + '</button><button class="btn sec2" type="button" id="btn-restart">Restart run</button></div>';
   }
   if (S.phase === 'over') {
@@ -713,7 +761,8 @@ function overlayHTML() {
       '<div class="tile"><label>Inventory turns</label><b>' + turns + '</b></div>' +
       '<div class="tile"><label>Stockouts</label><b>' + st.stockouts + '</b></div>' +
       '<div class="tile"><label>Spoiled crates</label><b>' + st.spoiled + '</b></div>' +
-      '<div class="tile"><label>Revenue</label><b>' + money(st.revenue) + '</b></div></div>' +
+      '<div class="tile"><label>Revenue</label><b>' + money(st.revenue) + '</b></div>' +
+      '<div class="tile"><label>Shift retries</label><b>' + S.retries + '</b></div></div>' +
       '<p class="sub">Stockout: an order expired while a crate it needed was nowhere in your storage or at the dock.</p>' +
       '<div class="row"><button class="btn" type="button" id="btn-again">Run it again</button></div>';
   }
@@ -721,7 +770,7 @@ function overlayHTML() {
 }
 function syncOverlay() {
   const ov = $('#ov'), show = S.phase !== 'play' || S.paused;
-  const key = S.phase + '|' + S.paused + '|' + S.round + '|' + S.cash + '|' + JSON.stringify(S.up);
+  const key = S.phase + '|' + S.paused + '|' + S.round + '|' + S.cash + '|' + S.retries + '|' + JSON.stringify(S.up);
   if (!show) { ov.hidden = true; ovKey = ''; return; }
   if (key !== ovKey) { $('#ovp').innerHTML = overlayHTML(); ovKey = key; ov.scrollTop = 0; }
   ov.hidden = false;
@@ -793,6 +842,7 @@ $('#ov').addEventListener('click', e => {
   if (b.id === 'btn-start') newGame();
   else if (b.id === 'btn-resume') { S.paused = false; syncOverlay(); }
   else if (b.id === 'btn-next') startRound();
+  else if (b.id === 'btn-retry') retryRound();
   else if (b.id === 'btn-again' || b.id === 'btn-restart') newGame();
   else if (b.dataset.buy) {
     const u = UPS.find(u => u.id === b.dataset.buy), n = S.up[u.id], c = u.cost(n);
@@ -825,7 +875,7 @@ function frame(now) {
 
 function start(data) {
   try {
-    if (data && data.S && data.S.phase) { S = data.S; if (S.phase === 'play') S.paused = true; S.selected = null; }
+    if (data && data.S && data.S.phase) { S = Object.assign(fresh(), data.S); S.r = Object.assign({ units: 0, met: false }, S.r); if (S.phase === 'play') S.paused = true; S.selected = null; }
   } catch (e) { S = fresh(); }
   dirty = true; syncOverlay(); requestAnimationFrame(frame);
 }
