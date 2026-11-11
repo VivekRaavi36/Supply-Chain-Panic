@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Supply Chain Panic</title>
+<meta name="description" content="A warehouse management arcade game. Unload trucks, fill orders before the clock runs out, and survive supply chain disruptions.">
+<meta name="theme-color" content="#14202B">
+<meta property="og:title" content="Supply Chain Panic">
+<meta property="og:description" content="A warehouse management arcade game. Unload trucks, fill orders before the clock runs out, and survive supply chain disruptions.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%2314202B'/%3E%3Crect x='14' y='18' width='36' height='32' fill='%233F6FB4' stroke='%2314202B' stroke-width='3'/%3E%3Crect x='28' y='18' width='8' height='32' fill='%23ffffff' opacity='.35'/%3E%3Crect x='8' y='8' width='48' height='6' fill='%23F2B705'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a warehouse floor seen from above. Dark HUD band, hazard-tape ticker, then three painted zones
+   (inbound dock, storage racks, outbound orders). Committed single look: concrete grey, ink navy, safety tape yellow. */
+:root{
+  --ink:#14202B; --ink-2:#44525E; --floor:#C3C9C8; --zone:#DDE1DF; --paper:#F6F7F4;
+  --tape:#F2B705; --red:#C93C2B; --green:#2E8B57; --brown:#8A6A3F; --slate:#43607A;
+  --lpt:#3F6FB4; --mon:#17998A; --prd:#6DB33F; --dai:#7FC3E6;
+  --f-disp:'Big Shoulders Display','Arial Narrow',Impact,sans-serif;
+  --f-mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+  --f-text:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --c:58px; --n:40px;
+}
+*{box-sizing:border-box}
+html{height:100%}
+body{
+  min-height:100%; display:flex; flex-direction:column;
+  background-color:var(--floor);
+  background-image:
+    linear-gradient(rgba(20,32,43,.06) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(20,32,43,.06) 1px,transparent 1px);
+  background-size:48px 48px;
+  color:var(--ink); font-family:var(--f-text); font-size:14px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:12px;
+  -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;
+  overflow-x:hidden;
+}
+#app{flex:1; display:flex; flex-direction:column; gap:10px; min-width:0; max-width:1280px; width:100%; margin:0 auto}
+button{font:inherit; color:inherit}
+
+/* HUD */
+.hud{background:var(--ink); color:#fff; display:flex; flex-wrap:wrap; align-items:center; gap:10px 24px; padding:10px 14px; border:2px solid var(--ink)}
+.brand{display:flex; flex-direction:column; line-height:.85; font-family:var(--f-disp); text-transform:uppercase}
+.brand .l1{font-weight:700; font-size:15px; letter-spacing:.2em; color:var(--tape)}
+.brand .l2{font-weight:900; font-size:36px; letter-spacing:.02em}
+.stats{display:flex; flex-wrap:wrap; gap:8px 26px; flex:1; min-width:0}
+.stat{display:flex; flex-direction:column; min-width:70px}
+.stat label{font:500 10px var(--f-mono); letter-spacing:.14em; text-transform:uppercase; color:#9FB0BE}
+.stat b{font:800 28px/1 var(--f-disp); letter-spacing:.02em; font-variant-numeric:tabular-nums}
+.stat.cash b{color:var(--tape)}
+.rep-bar{height:6px; background:#34475A; margin-top:4px; width:120px; max-width:100%}
+.rep-bar i{display:block; height:100%; width:80%; background:var(--green); transition:width .25s}
+.ctrl{display:flex; gap:8px}
+.ghost-btn{background:transparent; border:2px solid #5B7083; color:#fff; font:600 11px var(--f-mono); letter-spacing:.08em; text-transform:uppercase; padding:7px 10px; cursor:pointer}
+.ghost-btn:hover{border-color:var(--tape); color:var(--tape)}
+
+/* Ticker */
+.ticker{display:flex; align-items:stretch; background:var(--tape); border:2px solid var(--ink); min-height:38px; overflow:hidden}
+.ticker .live{display:grid; place-items:center; padding:0 14px; color:var(--tape); font:800 15px var(--f-disp); letter-spacing:.18em;
+  background:repeating-linear-gradient(-45deg,var(--ink) 0 9px,#2A3A48 9px 18px)}
+.ticker .msg{padding:8px 12px; font:600 13px/1.25 var(--f-mono); letter-spacing:.02em; align-self:center; min-width:0}
+.ticker.alert{background:var(--red); color:#fff}
+.ticker.alert .live{color:#fff}
+.ticker.good{background:#BFE3CE}
+
+/* Zones */
+.floor{flex:1; display:grid; grid-template-columns:minmax(240px,1fr) minmax(320px,1.45fr) minmax(280px,1.2fr); gap:12px; min-width:0}
+.zone{position:relative; background:var(--zone); border:3px solid var(--tape); outline:2px solid var(--ink); outline-offset:-5px; padding:34px 12px 12px; min-width:0; min-height:280px}
+.zone h2{position:absolute; top:-3px; left:-3px; margin:0; display:flex; align-items:center; gap:10px; max-width:calc(100% + 6px);
+  background:var(--tape); color:var(--ink); padding:3px 12px 3px 10px; border:2px solid var(--ink); border-bottom-width:2px;
+  font:800 18px/1.1 var(--f-disp); letter-spacing:.1em; text-transform:uppercase}
+.zone h2 small{font:600 11px var(--f-mono); letter-spacing:.06em}
+.zone h2 small.full{color:var(--red)}
+.badge{position:absolute; top:6px; right:8px; font:600 10px var(--f-mono); letter-spacing:.06em; text-transform:uppercase; background:var(--red); color:#fff; padding:3px 7px; display:none}
+.badge.on{display:block}
+.stack{display:flex; flex-direction:column; gap:10px}
+.empty{margin:6px 0; color:var(--ink-2); font-size:13px}
+
+.truck,.order{position:relative; background:var(--paper); border:2px solid var(--ink); padding:8px 10px 8px; box-shadow:3px 3px 0 rgba(20,32,43,.85)}
+.t-top,.o-top{display:flex; align-items:center; gap:8px; margin-bottom:8px; font:600 12px var(--f-mono); letter-spacing:.04em; text-transform:uppercase; min-width:0}
+.t-top .sup{color:var(--ink-2); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.mini-btn{background:var(--ink); color:#fff; border:0; font:600 10px var(--f-mono); letter-spacing:.08em; text-transform:uppercase; padding:6px 8px; cursor:pointer}
+.mini-btn:hover{background:var(--slate)}
+.tcrates{display:flex; flex-wrap:wrap; gap:8px; min-height:var(--c)}
+.o-bot{display:flex; align-items:center; gap:8px; margin-top:8px}
+.tbar{flex:1; height:8px; background:rgba(20,32,43,.16)}
+.tbar i{display:block; height:100%; width:100%; background:var(--ink)}
+.tbar i[data-lvl="warn"]{background:#D98E04}
+.tbar i[data-lvl="crit"]{background:var(--red)}
+.sec{font:600 12px var(--f-mono); min-width:34px; text-align:right; font-variant-numeric:tabular-nums}
+
+/* Orders */
+.order{border-left-width:8px}
+.order.k-express{border-left-color:var(--red)}
+.order.k-standard{border-left-color:var(--slate)}
+.order.k-bulk{border-left-color:var(--brown)}
+.order .tag{font:700 10px var(--f-mono); letter-spacing:.12em; padding:3px 6px; color:#fff; background:var(--slate)}
+.order.k-express .tag{background:var(--red)}
+.order.k-bulk .tag{background:var(--brown)}
+.order .cust{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink)}
+.order .pay{font:800 26px/1 var(--f-disp); letter-spacing:.02em}
+.needs{display:flex; flex-wrap:wrap; gap:6px}
+.need{width:var(--n); height:var(--n); display:grid; place-items:center; border:2px dashed var(--bg); background:color-mix(in srgb,var(--bg) 20%,transparent); font:600 10px var(--f-mono); letter-spacing:.04em}
+.order.urgent{animation:throb .7s ease-in-out infinite alternate}
+@keyframes throb{from{box-shadow:3px 3px 0 rgba(20,32,43,.85)}to{box-shadow:3px 3px 0 var(--red), 0 0 0 3px var(--red)}}
+.order.done{opacity:.85}
+.order.done::after{content:"SHIPPED"; position:absolute; inset:0; display:grid; place-items:center; background:rgba(46,139,87,.9); color:#fff; font:900 34px var(--f-disp); letter-spacing:.14em}
+
+/* Crates */
+.t-LPT{--bg:var(--lpt)} .t-MON{--bg:var(--mon)} .t-PRD{--bg:var(--prd)} .t-DAI{--bg:var(--dai)}
+.crate{position:relative; flex:none; width:var(--c); height:var(--c); background:var(--bg); display:grid; place-items:center; cursor:grab; touch-action:none;
+  box-shadow:inset 0 -7px 0 rgba(20,32,43,.22), inset 0 0 0 2px rgba(20,32,43,.4)}
+.crate::before{content:""; position:absolute; left:42%; width:16%; top:0; bottom:0; background:rgba(255,255,255,.3)}
+.crate .code{position:relative; background:#fff; color:var(--ink); font:600 11px/1 var(--f-mono); letter-spacing:.04em; padding:3px 4px}
+.crate .px{position:absolute; top:2px; left:2px; background:rgba(20,32,43,.82); color:#fff; font:600 9px/1 var(--f-mono); padding:2px 3px}
+.crate .fresh{position:absolute; left:5px; right:5px; bottom:4px; height:5px; background:rgba(20,32,43,.45)}
+.crate .fresh b{display:block; height:100%; width:100%; background:#7CE07C}
+.crate .fresh b[data-lvl="warn"]{background:#F2B705}
+.crate .fresh b[data-lvl="crit"]{background:#FF5A47}
+.crate.mini{--c:var(--n); cursor:default}
+.crate.mini .code{font-size:9px; padding:2px 3px}
+.crate.sel{outline:3px solid var(--ink); outline-offset:2px; transform:translateY(-2px)}
+.crate.spoiled{background:#868C8A; cursor:pointer}
+.crate.spoiled::before{background:repeating-linear-gradient(45deg,rgba(20,32,43,.25) 0 6px,transparent 6px 12px); left:0; width:100%}
+.crate .stamp{position:absolute; inset:auto 0 4px 0; text-align:center; font:700 8px var(--f-mono); letter-spacing:.06em; color:#fff; background:var(--red); transform:rotate(-12deg)}
+.crate.ghost{position:fixed; z-index:60; pointer-events:none; opacity:.92; transform:scale(1.12) rotate(-3deg); box-shadow:6px 8px 0 rgba(20,32,43,.35), inset 0 0 0 2px rgba(20,32,43,.4)}
+
+.slots{display:grid; grid-template-columns:repeat(auto-fill,minmax(calc(var(--c) + 10px),1fr)); gap:8px}
+.slot{aspect-ratio:1; display:grid; place-items:center; border:2px dashed rgba(20,32,43,.35); background:rgba(255,255,255,.35); min-width:0}
+.slot.empty.ok,.order.ok{outline:3px dashed var(--ink); outline-offset:2px}
+.slot.ok{border-color:var(--ink); background:rgba(242,183,5,.35)}
+.order.ok{background:#FFF6D6}
+.slot.hot,.order.hot{outline-style:solid; background:rgba(242,183,5,.7)}
+
+/* Buttons, overlay, toast, fx */
+.btn{font:800 20px var(--f-disp); letter-spacing:.08em; text-transform:uppercase; background:var(--tape); color:var(--ink); border:2px solid var(--ink); padding:10px 20px; cursor:pointer; box-shadow:3px 3px 0 var(--ink)}
+.btn:active{transform:translate(2px,2px); box-shadow:1px 1px 0 var(--ink)}
+.btn:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
+.btn.sec2{background:var(--paper)}
+button:focus-visible{outline:3px solid var(--red); outline-offset:2px}
+
+.ov{position:fixed; inset:0; z-index:80; background:rgba(20,32,43,.82); display:flex; align-items:flex-start; justify-content:center; overflow-y:auto;
+  padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.ov[hidden]{display:none}
+.panel{background:var(--paper); border:3px solid var(--tape); outline:2px solid var(--ink); outline-offset:-6px; width:100%; max-width:640px; margin:auto; padding:26px 24px 24px; user-select:text; -webkit-user-select:text}
+.panel h1{margin:0; font:900 54px/.85 var(--f-disp); text-transform:uppercase; letter-spacing:.01em}
+.panel h1 span{display:block; font-size:20px; letter-spacing:.3em; color:var(--slate); font-weight:700; margin-bottom:6px}
+.panel h2{margin:0 0 4px; font:900 40px/.95 var(--f-disp); text-transform:uppercase}
+.panel p{margin:10px 0; line-height:1.5; max-width:60ch}
+.panel .sub{font:500 12px var(--f-mono); letter-spacing:.08em; text-transform:uppercase; color:var(--ink-2)}
+.how{margin:14px 0 18px; padding:0; list-style:none; display:grid; gap:8px}
+.how li{display:grid; grid-template-columns:30px 1fr; gap:10px; align-items:start; line-height:1.4}
+.how b{display:grid; place-items:center; width:28px; height:28px; background:var(--ink); color:var(--tape); font:800 16px var(--f-disp)}
+.row{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:16px}
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin:14px 0}
+.tile{border:2px solid var(--ink); padding:8px 10px; background:#fff}
+.tile label{display:block; font:500 10px var(--f-mono); letter-spacing:.12em; text-transform:uppercase; color:var(--ink-2)}
+.tile b{font:800 30px/1.1 var(--f-disp); font-variant-numeric:tabular-nums}
+.tile.big{background:var(--ink); color:#fff} .tile.big label{color:#9FB0BE} .tile.big b{color:var(--tape); font-size:40px}
+.up{display:flex; justify-content:space-between; align-items:center; gap:12px; border:2px solid var(--ink); background:#fff; padding:10px 12px; margin-top:8px}
+.up h3{margin:0; font:800 21px var(--f-disp); text-transform:uppercase; letter-spacing:.03em}
+.up p{margin:2px 0 0; font-size:13px}
+.up .own{font:500 11px var(--f-mono); color:var(--ink-2)}
+.fc{border:2px dashed var(--ink); padding:10px 12px; margin-top:12px; font:500 12px/1.5 var(--f-mono)}
+.fc b{color:var(--red)}
+
+#toast{position:fixed; left:50%; bottom:max(24px,env(safe-area-inset-bottom,0px)); transform:translate(-50%,20px); z-index:90; background:var(--ink); color:#fff; padding:9px 14px; font:600 12px var(--f-mono); letter-spacing:.04em; opacity:0; pointer-events:none; transition:opacity .15s, transform .15s; max-width:90vw; text-align:center}
+#toast.show{opacity:1; transform:translate(-50%,0)}
+.fx{position:fixed; z-index:70; pointer-events:none; transform:translateX(-50%); font:900 28px var(--f-disp); letter-spacing:.04em; animation:rise 1.1s ease-out forwards; text-shadow:0 2px 0 rgba(255,255,255,.7)}
+.fx.good{color:var(--green)} .fx.bad{color:var(--red)} .fx.warn{color:#B07800}
+@keyframes rise{from{opacity:1; margin-top:0}to{opacity:0; margin-top:-46px}}
+
+@media (max-width:900px){
+  :root{--c:48px; --n:36px}
+  .floor{grid-template-columns:1fr}
+  .z-out{order:1} .z-in{order:2} .z-st{order:3}
+  .zone{min-height:0}
+  .hud{gap:8px 10px}
+  .brand{order:1; flex-direction:row; align-items:baseline; gap:8px; flex:1}
+  .brand .l1{font-size:13px}
+  .brand .l2{font-size:30px}
+  .ctrl{order:2}
+  .stats{order:3; width:100%; flex:none; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px}
+  .stat{min-width:0}
+  .stat b{font-size:24px}
+  .rep-bar{width:100%}
+  .panel{padding:22px 16px 18px}
+  .panel h1{font-size:44px}
+}
+@media (prefers-reduced-motion:reduce){
+  .order.urgent{animation:none; outline:3px solid var(--red)}
+  .fx{animation-duration:.01s; opacity:1}
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <header class="hud">
+    <div class="brand"><span class="l1">Supply Chain</span><span class="l2">Panic</span></div>
+    <div class="stats">
+      <div class="stat cash"><label>Cash</label><b id="v-cash">$500</b></div>
+      <div class="stat"><label>Reputation</label><b id="v-rep">80</b><div class="rep-bar"><i id="b-rep"></i></div></div>
+      <div class="stat"><label>Shift <span id="v-round">1</span></label><b id="v-time">1:15</b></div>
+      <div class="stat"><label>Service</label><b id="v-svc">-</b></div>
+    </div>
+    <div class="ctrl">
+      <button class="ghost-btn" id="btn-pause" type="button">Pause</button>
+      <button class="ghost-btn" id="btn-restart-hud" type="button">Restart</button>
+      <button class="ghost-btn" id="btn-mute" type="button">Sound on</button>
+    </div>
+  </header>
+  <div class="ticker" id="ticker"><span class="live">LIVE</span><span class="msg" id="tick-msg"></span></div>
+  <main class="floor">
+    <section class="zone z-in"><h2><span>Inbound dock</span></h2><span class="badge" id="bd-in"></span><div id="trucks" class="stack"></div></section>
+    <section class="zone z-st"><h2><span>Storage</span><small id="cap">0/12</small></h2><span class="badge" id="bd-st"></span><div id="slots" class="slots"></div></section>
+    <section class="zone z-out"><h2><span>Outbound orders</span></h2><span class="badge" id="bd-out"></span><div id="orders" class="stack"></div></section>
+  </main>
+</div>
+<div class="ov" id="ov" hidden><div class="panel" id="ovp"></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const shuffle = a => a.map(v => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map(x => x[1]);
+const money = n => '$' + Math.round(n).toLocaleString('en-US');
+
+/* ---------- Data ---------- */
+const ITEMS = {
+  LPT: { name: 'Laptops',  price: 90, shelf: 0 },
+  MON: { name: 'Monitors', price: 70, shelf: 0 },
+  PRD: { name: 'Produce',  price: 30, shelf: 42 },
+  DAI: { name: 'Dairy',    price: 26, shelf: 30 }
+};
+const TYPES = Object.keys(ITEMS);
+const COST_RATE = 0.5;
+const ROUND_LEN = 75;
+const cost = t => Math.round(ITEMS[t].price * COST_RATE);
+const KIND = { express: 'Express', standard: 'Standard', bulk: 'Bulk' };
+const MULT = { express: 1.6, standard: 1, bulk: 0.9 };
+const LATE_REP = { express: 10, standard: 8, bulk: 6 };
+const CUSTOMERS = ['Sagar Mart', 'Nimbus Tech', 'Greenleaf Grocers', 'Orbit Retail', 'Pixel Planet', 'Daily Fresh', 'Metro Cash', 'Bluebell Dairy', 'Urban Cart', 'Vertex Office'];
+const SUPPLIERS = ['Apex Freight', 'Delta Haulers', 'Greenline Cargo', 'Rapid Roadways', 'Southern Express'];
+
+const DIS = {
+  strike: { name: 'Port strike',      zone: 'in',  dur: 30, text: 'Inbound trucks arrive half as often.' },
+  shorts: { name: 'Supplier short-ships', zone: 'in', dur: 40, text: 'The next trucks arrive half loaded.' },
+  rain:   { name: 'Heavy rain',       zone: 'in',  dur: 30, text: 'Drivers want out. Trucks leave in half the time.' },
+  spike:  { name: 'Demand spike',     zone: 'out', dur: 25, text: 'Orders are arriving twice as fast.' },
+  heat:   { name: 'Heatwave',         zone: 'st',  dur: 30, text: 'Produce and dairy spoil twice as fast.' },
+  audit:  { name: 'Surprise audit',   zone: 'st',  dur: 15, text: 'Inspector arrives soon. Dump spoiled crates now.' }
+};
+const UPS = [
+  { id: 'rack',  name: 'Extra racking',        desc: '+4 storage slots.',                         cost: n => 350 + 150 * n, max: 3 },
+  { id: 'dock',  name: 'Second outbound dock', desc: 'Handle one more order at a time.',          cost: n => 500 + 300 * n, max: 2 },
+  { id: 'fork',  name: 'Forklift lane',        desc: 'Inbound trucks wait 40% longer.',           cost: () => 400, max: 1 },
+  { id: 'cold',  name: 'Cold storage',         desc: 'Produce and dairy last 50% longer.',        cost: () => 450, max: 1 },
+  { id: 'fcast', name: 'Demand forecast',      desc: 'See the next shift\'s disruptions in advance.', cost: () => 300, max: 1 }
+];
+const TIPS = [
+  'Tap a crate, then tap where it goes. Or drag it.',
+  'Every crate you unload costs cash. Take what the orders need.',
+  'Produce and dairy age on your shelves. Ship the oldest first.',
+  'Express orders pay 60% more but run out fast.',
+  'A spoiled crate keeps its slot until you tap it to dump it.',
+  'Service level is the share of orders you shipped on time.'
+];
+
+/* ---------- State ---------- */
+let S, dirty = true, drag = null, justDragged = false, muted = false;
+function fresh() {
+  return {
+    phase: 'title', paused: false, round: 0, t: ROUND_LEN,
+    cash: 500, rep: 80,
+    slots: Array(12).fill(null), trucks: [], orders: [],
+    nextTruck: 1, nextOrder: 0.3, idc: 1, truckNo: 1, orderNo: 1, shortsLeft: 0,
+    up: { rack: 0, dock: 0, fork: 0, cold: 0, fcast: 0 },
+    plan: [], nextPlan: [], msg: null, selected: null,
+    stats: { shipped: 0, late: 0, units: 0, revenue: 0, stockouts: 0, spoiled: 0, rounds: 0, stockSum: 0, stockTime: 0 },
+    r: { shipped: 0, late: 0, revenue: 0, rep0: 80 }
+  };
+}
+S = fresh();
+const maxOrders = () => 3 + S.up.dock;
+const has = id => S.plan.some(p => p.id === id && p.started && p.left > 0);
+
+/* ---------- Sound ---------- */
+let AC = null;
+function tone(f, d, type, v, delay) {
+  if (muted) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const t0 = AC.currentTime + (delay || 0), o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(v, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d);
+    o.connect(g); g.connect(AC.destination); o.start(t0); o.stop(t0 + d + 0.02);
+  } catch (e) {}
+}
+const sfx = {
+  pick: () => tone(520, .05, 'square', .04),
+  drop: () => tone(300, .08, 'square', .05),
+  bad:  () => tone(170, .14, 'square', .05),
+  ship: () => { tone(660, .09, 'triangle', .09); tone(990, .18, 'triangle', .09, .09); },
+  late: () => tone(140, .32, 'sawtooth', .07),
+  siren: () => { tone(720, .16, 'square', .05); tone(500, .16, 'square', .05, .18); tone(720, .16, 'square', .05, .36); },
+  spoil: () => tone(220, .2, 'sawtooth', .04),
+  buy: () => { tone(440, .08, 'triangle', .07); tone(660, .12, 'triangle', .07, .08); },
+  truck: () => tone(260, .12, 'triangle', .05)
+};
+
+/* ---------- Helpers: feedback ---------- */
+let toastT = 0;
+function toast(m) {
+  if (S.phase !== 'play') return;
+  const t = $('#toast'); t.textContent = m; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1700);
+}
+function floatFx(text, cls, el) {
+  const r = el ? el.getBoundingClientRect() : { left: innerWidth / 2, top: innerHeight / 2, width: 0 };
+  const d = document.createElement('div');
+  d.className = 'fx ' + cls; d.textContent = text;
+  d.style.left = (r.left + r.width / 2) + 'px'; d.style.top = (r.top + 8) + 'px';
+  document.body.appendChild(d); setTimeout(() => d.remove(), 1150);
+}
+function announce(text, kind) { S.msg = { text, kind: kind || '', left: 6 }; }
+
+/* ---------- Plan (disruptions) ---------- */
+function makePlan(r) {
+  if (r <= 1) return [];
+  const ids = Object.keys(DIS), a = pick(ids);
+  const plan = [{ id: a, at: rnd(10, 24) }];
+  if (r >= 5) { let b; do { b = pick(ids); } while (b === a); plan.push({ id: b, at: rnd(42, 52) }); }
+  return plan.map(p => ({ id: p.id, at: p.at, dur: DIS[p.id].dur, started: false, left: 0 }));
+}
+
+/* ---------- Spawning ---------- */
+function weights() {
+  const need = {}, have = {};
+  TYPES.forEach(t => { need[t] = 0; have[t] = 0; });
+  S.orders.forEach(o => { if (!o.done) o.needs.forEach(n => { if (!n.crate) need[n.type]++; }); });
+  S.slots.forEach(c => { if (c && !c.spoiled) have[c.type]++; });
+  S.trucks.forEach(t => t.crates.forEach(c => { if (c) have[c.type]++; }));
+  return TYPES.map(t => 1 + 2 * Math.max(0, need[t] - have[t]));
+}
+function wpick(w) {
+  let x = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < w.length; i++) { x -= w[i]; if (x <= 0) return TYPES[i]; }
+  return TYPES[0];
+}
+function spawnTruck() {
+  let n = rnd(3, 5);
+  if (has('shorts') && S.shortsLeft > 0) { n = Math.max(1, Math.ceil(n / 2)); S.shortsLeft--; }
+  const w = weights(), crates = [];
+  for (let i = 0; i < n; i++) crates.push({ id: S.idc++, type: wpick(w), age: 0, spoiled: false });
+  const win = 20 * (S.up.fork ? 1.4 : 1) * (has('rain') ? 0.5 : 1);
+  S.trucks.push({ id: S.truckNo++, sup: pick(SUPPLIERS), crates, t: win, tMax: win });
+  sfx.truck(); dirty = true;
+}
+function truckInterval() {
+  let v = 10 - Math.min(2, S.round * 0.2);
+  if (has('strike')) v *= 2;
+  return v * (0.8 + Math.random() * 0.4);
+}
+function spawnOrder() {
+  const r = Math.random(), pe = 0.25 + Math.min(0.15, S.round * 0.02);
+  const kind = r < pe ? 'express' : r < 0.8 ? 'standard' : 'bulk';
+  const rng = { express: [2, 3], standard: [3, 4], bulk: [5, 6] }[kind];
+  const n = rnd(rng[0], rng[1]);
+  const pool = kind === 'bulk' ? shuffle(TYPES).slice(0, 2) : TYPES;
+  const needs = Array.from({ length: n }, () => ({ type: pick(pool), crate: false }));
+  const base = { express: 32, standard: 56, bulk: 88 }[kind];
+  const scale = Math.max(0.55, 1 - 0.035 * (S.round - 1));
+  const sum = needs.reduce((a, x) => a + ITEMS[x.type].price, 0);
+  const tMax = base * scale;
+  S.orders.push({ id: S.orderNo++, kind, cust: pick(CUSTOMERS), needs, pay: Math.round(sum * MULT[kind]), t: tMax, tMax, done: false, doneT: 0 });
+  dirty = true;
+}
+function orderInterval() {
+  return Math.max(3.2, 9 - S.round * 0.6) * (has('spike') ? 0.5 : 1) * (0.8 + Math.random() * 0.4);
+}
+
+/* ---------- Order outcomes ---------- */
+function completeOrder(o) {
+  o.done = true; o.doneT = 0.9;
+  S.cash += o.pay; S.rep = Math.min(100, S.rep + 2);
+  S.stats.shipped++; S.stats.units += o.needs.length; S.stats.revenue += o.pay;
+  S.r.shipped++; S.r.revenue += o.pay;
+  floatFx('+' + money(o.pay), 'good', document.querySelector('[data-oid="' + o.id + '"]'));
+  sfx.ship(); dirty = true;
+}
+function lateOrder(o) {
+  o.dead = true;
+  const miss = o.needs.filter(n => !n.crate).map(n => n.type);
+  const out = miss.some(t => !S.slots.some(c => c && c.type === t && !c.spoiled) && !S.trucks.some(tr => tr.crates.some(c => c && c.type === t)));
+  if (out) S.stats.stockouts++;
+  const pen = LATE_REP[o.kind];
+  S.rep = Math.max(0, S.rep - pen);
+  S.stats.late++; S.r.late++;
+  floatFx('LATE -' + pen + ' rep', 'bad', document.querySelector('[data-oid="' + o.id + '"]'));
+  sfx.late(); dirty = true;
+}
+function runAudit() {
+  const n = S.slots.filter(c => c && c.spoiled).length;
+  if (n > 0) {
+    const fine = 40 * n;
+    S.cash = Math.max(0, S.cash - fine); S.rep = Math.max(0, S.rep - 2 * n);
+    announce('Audit failed: ' + n + ' spoiled crate' + (n > 1 ? 's' : '') + '. Fine ' + money(fine) + ' and -' + (2 * n) + ' reputation.', 'alert');
+    sfx.late();
+  } else {
+    S.rep = Math.min(100, S.rep + 3);
+    announce('Audit passed. Clean floor, +3 reputation.', 'good');
+    sfx.ship();
+  }
+}
+
+/* ---------- Actions ---------- */
+function crateAt(s) {
+  if (!s) return null;
+  if (s.kind === 'slot') return S.slots[s.i] || null;
+  const t = S.trucks.find(t => t.id === s.tid); return t ? (t.crates[s.i] || null) : null;
+}
+function removeAt(s) {
+  if (s.kind === 'slot') S.slots[s.i] = null;
+  else { const t = S.trucks.find(t => t.id === s.tid); if (t) t.crates[s.i] = null; }
+}
+const sameSrc = (a, b) => a && b && a.kind === b.kind && a.i === b.i && a.tid === b.tid;
+function act(src, dest, quiet) {
+  const c = crateAt(src);
+  if (!c) return false;
+  const say = m => { if (!quiet) { toast(m); sfx.bad(); } return false; };
+  if (c.spoiled) return say('Spoiled. Tap it to dump it.');
+  const fromTruck = src.kind === 'truck', price = cost(c.type);
+  if (dest.kind === 'slot') {
+    if (S.slots[dest.i]) return say('That slot is taken.');
+    if (src.kind === 'slot' && src.i === dest.i) return false;
+    if (fromTruck) {
+      if (S.cash < price) return say('Not enough cash for that crate.');
+      S.cash -= price;
+    }
+    removeAt(src);
+    S.slots[dest.i] = { id: c.id, type: c.type, age: fromTruck ? 0 : c.age, spoiled: false };
+  } else {
+    const o = S.orders.find(o => o.id === dest.oid);
+    if (!o || o.done) return false;
+    const need = o.needs.find(n => n.type === c.type && !n.crate);
+    if (!need) return say('That order does not need ' + ITEMS[c.type].name.toLowerCase() + '.');
+    if (fromTruck) {
+      if (S.cash < price) return say('Not enough cash for that crate.');
+      S.cash -= price;
+    }
+    removeAt(src); need.crate = true;
+    if (o.needs.every(n => n.crate)) completeOrder(o); else if (!quiet) sfx.drop();
+  }
+  if (dest.kind === 'slot' && !quiet) sfx.drop();
+  S.selected = null; dirty = true;
+  return true;
+}
+function unloadAll(tid) {
+  const t = S.trucks.find(t => t.id === tid); if (!t) return;
+  let moved = 0, stopped = '';
+  t.crates.forEach((c, i) => {
+    if (!c || stopped) return;
+    const free = S.slots.findIndex(s => !s);
+    if (free < 0) { stopped = 'Storage is full.'; return; }
+    if (S.cash < cost(c.type)) { stopped = 'Out of cash.'; return; }
+    if (act({ kind: 'truck', tid, i }, { kind: 'slot', i: free }, true)) moved++;
+  });
+  if (moved) sfx.drop();
+  if (stopped) toast(stopped);
+}
+function dumpCrate(i) {
+  if (S.slots[i] && S.slots[i].spoiled) { S.slots[i] = null; S.selected = null; dirty = true; sfx.drop(); }
+}
+
+/* ---------- Round flow ---------- */
+function startRound() {
+  S.round++; S.t = ROUND_LEN; S.plan = S.nextPlan; S.nextPlan = [];
+  S.trucks = []; S.orders = []; S.nextTruck = 1.2; S.nextOrder = 0.3; S.shortsLeft = 0;
+  S.selected = null; S.msg = null; S.r = { shipped: 0, late: 0, revenue: 0, rep0: S.rep };
+  S.phase = 'play'; S.paused = false; dirty = true; syncOverlay();
+}
+function endRound() {
+  S.stats.rounds++; S.phase = 'shop'; S.nextPlan = makePlan(S.round + 1);
+  S.trucks = []; S.orders = []; S.plan = []; S.selected = null; dirty = true; syncOverlay();
+}
+function score() { return S.stats.revenue + 250 * S.stats.rounds; }
+function gameOver() {
+  S.phase = 'over'; S.selected = null;
+  try {
+    const best = +localStorage.getItem('scp-best') || 0;
+    if (score() > best) localStorage.setItem('scp-best', String(score()));
+  } catch (e) {}
+  dirty = true; syncOverlay();
+}
+function newGame() { S = fresh(); S.phase = 'play'; startRoundFromFresh(); }
+function startRoundFromFresh() { S.nextPlan = makePlan(1); startRound(); }
+
+/* ---------- Simulation ---------- */
+function step(dt) {
+  S.t -= dt;
+  const el = ROUND_LEN - S.t;
+  if (S.msg) { S.msg.left -= dt; if (S.msg.left <= 0) S.msg = null; }
+
+  for (const p of S.plan) {
+    if (!p.started && el >= p.at) {
+      p.started = true; p.left = p.dur;
+      if (p.id === 'shorts') S.shortsLeft = 3;
+      sfx.siren();
+    } else if (p.started && p.left > 0) {
+      p.left -= dt;
+      if (p.left <= 0) { p.left = 0; if (p.id === 'audit') runAudit(); }
+    }
+  }
+
+  for (const t of S.trucks) t.t -= dt;
+  const before = S.trucks.length;
+  S.trucks = S.trucks.filter(t => {
+    if (!t.crates.some(Boolean)) return false;
+    if (t.t <= 0) { const n = t.crates.filter(Boolean).length; if (n) toast('Truck #' + t.id + ' left with ' + n + ' crate' + (n > 1 ? 's' : '') + ' on board.'); return false; }
+    return true;
+  });
+  if (S.trucks.length !== before) dirty = true;
+  S.nextTruck -= dt;
+  if (S.nextTruck <= 0 && S.trucks.length < 2) { spawnTruck(); S.nextTruck = truckInterval(); }
+
+  S.nextOrder -= dt;
+  if (S.nextOrder <= 0 && S.orders.filter(o => !o.done).length < maxOrders()) { spawnOrder(); S.nextOrder = orderInterval(); }
+  for (const o of S.orders) {
+    if (o.done) { o.doneT -= dt; continue; }
+    o.t -= dt; if (o.t <= 0) lateOrder(o);
+  }
+  const n0 = S.orders.length;
+  S.orders = S.orders.filter(o => !o.dead && !(o.done && o.doneT <= 0));
+  if (S.orders.length !== n0) dirty = true;
+
+  const rate = (has('heat') ? 2 : 1) * dt;
+  let stock = 0;
+  S.slots.forEach(c => {
+    if (!c) return;
+    if (!c.spoiled) stock++;
+    const sh = ITEMS[c.type].shelf * (S.up.cold ? 1.5 : 1);
+    if (sh && !c.spoiled) {
+      c.age += rate;
+      if (c.age >= sh) { c.spoiled = true; S.stats.spoiled++; sfx.spoil(); dirty = true; }
+    }
+  });
+  S.stats.stockSum += stock * dt; S.stats.stockTime += dt;
+
+  if (S.rep <= 0) return gameOver();
+  if (S.t <= 0) endRound();
+}
+
+/* ---------- Rendering ---------- */
+function crateHTML(c, src, price) {
+  const it = ITEMS[c.type];
+  const at = src.kind === 'slot' ? 'data-src="slot" data-i="' + src.i + '"' : 'data-src="truck" data-tid="' + src.tid + '" data-i="' + src.i + '"';
+  return '<div class="crate t-' + c.type + (c.spoiled ? ' spoiled' : '') + '" data-crate ' + at + ' title="' + it.name + '">' +
+    '<span class="code">' + c.type + '</span>' +
+    (price ? '<span class="px">$' + cost(c.type) + '</span>' : '') +
+    (it.shelf && !c.spoiled ? '<i class="fresh" data-fresh="' + (src.kind === 'slot' ? src.i : -1) + '"><b></b></i>' : '') +
+    (c.spoiled ? '<span class="stamp">SPOILED</span>' : '') + '</div>';
+}
+function truckHTML(t) {
+  const cr = t.crates.map((c, i) => c ? crateHTML(c, { kind: 'truck', tid: t.id, i }, true) : '').join('');
+  return '<article class="truck"><div class="t-top"><span>Truck #' + t.id + '</span><span class="sup">' + t.sup + '</span>' +
+    '<button class="mini-btn" type="button" data-unload="' + t.id + '">Unload all</button></div>' +
+    '<div class="tcrates">' + cr + '</div>' +
+    '<div class="o-bot"><div class="tbar"><i data-ttimer="' + t.id + '"></i></div><span class="sec" data-tsec="' + t.id + '"></span></div></article>';
+}
+function orderHTML(o) {
+  const needs = o.needs.map(n => n.crate
+    ? '<div class="crate mini t-' + n.type + '"><span class="code">' + n.type + '</span></div>'
+    : '<div class="need t-' + n.type + '">' + n.type + '</div>').join('');
+  return '<article class="order k-' + o.kind + (o.done ? ' done' : '') + '" data-drop="order" data-oid="' + o.id + '">' +
+    '<div class="o-top"><span class="tag">' + KIND[o.kind] + '</span><span class="cust">' + o.cust + '</span><b class="pay">' + money(o.pay) + '</b></div>' +
+    '<div class="needs">' + needs + '</div>' +
+    '<div class="o-bot"><div class="tbar"><i data-otimer="' + o.id + '"></i></div><span class="sec" data-osec="' + o.id + '"></span></div></article>';
+}
+function renderStructure() {
+  $('#trucks').innerHTML = S.trucks.length ? S.trucks.map(truckHTML).join('') : '<p class="empty">No trucks at the dock. The next one is on its way.</p>';
+  $('#slots').innerHTML = S.slots.map((c, i) =>
+    '<div class="slot' + (c ? '' : ' empty') + '" data-drop="slot" data-i="' + i + '">' + (c ? crateHTML(c, { kind: 'slot', i }) : '') + '</div>').join('');
+  $('#orders').innerHTML = S.orders.length ? S.orders.map(orderHTML).join('') : '<p class="empty">Waiting for the first order.</p>';
+  markUI();
+}
+function markUI() {
+  if (S.selected && !crateAt(S.selected)) S.selected = null;
+  const c = S.selected ? crateAt(S.selected) : null;
+  document.querySelectorAll('[data-crate]').forEach(el => el.classList.toggle('sel', !!S.selected && sameSrc(parseSrc(el), S.selected)));
+  document.querySelectorAll('[data-drop]').forEach(el => {
+    let ok = false;
+    if (c && !c.spoiled) {
+      if (el.dataset.drop === 'slot') ok = !S.slots[+el.dataset.i];
+      else { const o = S.orders.find(o => o.id === +el.dataset.oid); ok = !!o && !o.done && o.needs.some(n => n.type === c.type && !n.crate); }
+    }
+    el.classList.toggle('ok', ok);
+  });
+}
+const setText = (el, t) => { if (el && el.textContent !== t) el.textContent = t; };
+const lvl = (el, v) => { if (el.dataset.lvl !== v) el.dataset.lvl = v; };
+function updateDynamic() {
+  setText($('#v-cash'), money(S.cash));
+  setText($('#v-rep'), String(Math.round(S.rep)));
+  const rb = $('#b-rep'); rb.style.width = S.rep + '%';
+  rb.style.background = S.rep > 55 ? 'var(--green)' : S.rep > 28 ? '#D98E04' : 'var(--red)';
+  setText($('#v-round'), String(Math.max(1, S.round)));
+  const tl = Math.max(0, Math.ceil(S.t));
+  setText($('#v-time'), Math.floor(tl / 60) + ':' + String(tl % 60).padStart(2, '0'));
+  const tot = S.stats.shipped + S.stats.late;
+  setText($('#v-svc'), tot ? Math.round(100 * S.stats.shipped / tot) + '%' : '-');
+  const used = S.slots.filter(Boolean).length, cap = $('#cap');
+  setText(cap, used + '/' + S.slots.length); cap.classList.toggle('full', used >= S.slots.length);
+
+  document.querySelectorAll('[data-otimer]').forEach(el => {
+    const o = S.orders.find(o => o.id === +el.dataset.otimer); if (!o) return;
+    el.style.width = Math.max(0, 100 * o.t / o.tMax) + '%';
+    lvl(el, o.t < 8 ? 'crit' : o.t < o.tMax * 0.4 ? 'warn' : 'ok');
+    el.closest('.order').classList.toggle('urgent', o.t < 8 && !o.done);
+  });
+  document.querySelectorAll('[data-osec]').forEach(el => { const o = S.orders.find(o => o.id === +el.dataset.osec); if (o) setText(el, Math.max(0, Math.ceil(o.t)) + 's'); });
+  document.querySelectorAll('[data-ttimer]').forEach(el => {
+    const t = S.trucks.find(t => t.id === +el.dataset.ttimer); if (!t) return;
+    el.style.width = Math.max(0, 100 * t.t / t.tMax) + '%'; lvl(el, t.t < 4 ? 'crit' : t.t < 8 ? 'warn' : 'ok');
+  });
+  document.querySelectorAll('[data-tsec]').forEach(el => { const t = S.trucks.find(t => t.id === +el.dataset.tsec); if (t) setText(el, Math.max(0, Math.ceil(t.t)) + 's'); });
+  document.querySelectorAll('[data-fresh]').forEach(el => {
+    const i = +el.dataset.fresh, b = el.firstElementChild; if (i < 0) return;
+    const c = S.slots[i]; if (!c) return;
+    const r = Math.max(0, 1 - c.age / (ITEMS[c.type].shelf * (S.up.cold ? 1.5 : 1)));
+    b.style.width = (r * 100) + '%'; lvl(b, r < 0.25 ? 'crit' : r < 0.5 ? 'warn' : 'ok');
+  });
+
+  const badges = { in: [], st: [], out: [] };
+  if (S.phase === 'play') S.plan.forEach(p => {
+    if (p.started && p.left > 0) {
+      const d = DIS[p.id];
+      badges[d.zone].push(d.name + ' ' + Math.ceil(p.left) + 's');
+    }
+  });
+  for (const z of ['in', 'st', 'out']) { const b = $('#bd-' + z); setText(b, badges[z].join(' / ')); b.classList.toggle('on', badges[z].length > 0); }
+
+  const tk = $('#ticker'); let kind = '', text;
+  const act = S.phase === 'play' ? S.plan.find(p => p.started && p.left > 0) : null;
+  if (act) {
+    const d = DIS[act.id]; kind = 'alert';
+    text = d.name.toUpperCase() + ': ' + d.text + (act.id === 'shorts' ? ' (' + S.shortsLeft + ' left)' : '') + ' ' + Math.ceil(act.left) + 's';
+  } else if (S.msg) { kind = S.msg.kind; text = S.msg.text; }
+  else if (S.phase !== 'play') text = 'Shift ' + (S.round || 1) + ' standing by.';
+  else text = TIPS[Math.floor((ROUND_LEN - S.t) / 9) % TIPS.length];
+  setText($('#tick-msg'), text);
+  tk.className = 'ticker' + (kind ? ' ' + kind : '');
+}
+
+/* ---------- Overlay screens ---------- */
+let ovKey = '';
+function bestScore() { try { return +localStorage.getItem('scp-best') || 0; } catch (e) { return 0; } }
+function forecastHTML() {
+  if (!S.up.fcast) return '<div class="fc">Forecast locked. Buy Demand forecast to see disruptions before they hit.</div>';
+  if (!S.nextPlan.length) return '<div class="fc">Forecast: calm shift. No disruptions expected.</div>';
+  return '<div class="fc">Forecast for shift ' + (S.round + 1) + ': ' + S.nextPlan.map(p => '<b>' + DIS[p.id].name + '</b> at about ' + p.at + 's').join(', ') + '.</div>';
+}
+function overlayHTML() {
+  if (S.phase === 'title') {
+    const b = bestScore();
+    return '<h1><span>Warehouse management game</span>Supply Chain<br>Panic</h1>' +
+      '<p>You run the dock. Trucks bring stock, customers want it shipped before the clock runs out, and the world keeps getting in the way.</p>' +
+      '<ul class="how">' +
+      '<li><b>1</b><span>Move crates from inbound trucks into storage. Each crate you take costs cash.</span></li>' +
+      '<li><b>2</b><span>Drag crates onto an order, or tap a crate and then tap the order. Fill every slot before the timer ends.</span></li>' +
+      '<li><b>3</b><span>Produce and dairy spoil on the shelf. Late orders cost reputation. At zero, you are out.</span></li></ul>' +
+      '<div class="row"><button class="btn" type="button" id="btn-start">Start shift 1</button>' +
+      (b ? '<span class="sub">Best score ' + b.toLocaleString('en-US') + '</span>' : '') + '</div>';
+  }
+  if (S.phase === 'play' && S.paused) {
+    return '<h2>Paused</h2><p class="sub">Shift ' + S.round + '</p><div class="row"><button class="btn" type="button" id="btn-resume">Resume</button><button class="btn sec2" type="button" id="btn-restart">Restart run</button></div>';
+  }
+  if (S.phase === 'shop') {
+    const r = S.r, svc = r.shipped + r.late ? Math.round(100 * r.shipped / (r.shipped + r.late)) : 100;
+    const dRep = Math.round(S.rep - r.rep0);
+    const ups = UPS.map(u => {
+      const n = S.up[u.id], maxed = n >= u.max, c = u.cost(n), can = !maxed && S.cash >= c;
+      return '<div class="up"><div><h3>' + u.name + '</h3><p>' + u.desc + '</p><span class="own">' + n + ' of ' + u.max + ' owned</span></div>' +
+        '<button class="btn" type="button" data-buy="' + u.id + '"' + (can ? '' : ' disabled') + '>' + (maxed ? 'Maxed' : money(c)) + '</button></div>';
+    }).join('');
+    return '<h2>Shift ' + S.round + ' complete</h2><p class="sub">Cash ' + money(S.cash) + ' / Reputation ' + Math.round(S.rep) + '</p>' +
+      '<div class="tiles"><div class="tile"><label>Shipped</label><b>' + r.shipped + '</b></div><div class="tile"><label>Late</label><b>' + r.late + '</b></div>' +
+      '<div class="tile"><label>Service</label><b>' + svc + '%</b></div><div class="tile"><label>Revenue</label><b>' + money(r.revenue) + '</b></div>' +
+      '<div class="tile"><label>Reputation</label><b>' + (dRep >= 0 ? '+' : '') + dRep + '</b></div></div>' +
+      '<h2 style="font-size:28px;margin-top:6px">Upgrades</h2>' + ups + forecastHTML() +
+      '<div class="row"><button class="btn" type="button" id="btn-next">Start shift ' + (S.round + 1) + '</button><button class="btn sec2" type="button" id="btn-restart">Restart run</button></div>';
+  }
+  if (S.phase === 'over') {
+    const st = S.stats, tot = st.shipped + st.late, svc = tot ? Math.round(100 * st.shipped / tot) : 0;
+    const avg = st.stockTime ? st.stockSum / st.stockTime : 0;
+    const turns = avg > 0.5 ? (st.units / avg).toFixed(1) + 'x' : '-';
+    const best = bestScore();
+    return '<h2>Contract terminated</h2><p>Too many late orders. The client has moved to another warehouse.</p>' +
+      '<div class="tiles"><div class="tile big"><label>Score</label><b>' + score().toLocaleString('en-US') + '</b></div>' +
+      '<div class="tile"><label>Best</label><b>' + best.toLocaleString('en-US') + '</b></div></div>' +
+      '<p class="sub">Report card</p><div class="tiles">' +
+      '<div class="tile"><label>Shifts finished</label><b>' + st.rounds + '</b></div>' +
+      '<div class="tile"><label>Service level</label><b>' + svc + '%</b></div>' +
+      '<div class="tile"><label>Inventory turns</label><b>' + turns + '</b></div>' +
+      '<div class="tile"><label>Stockouts</label><b>' + st.stockouts + '</b></div>' +
+      '<div class="tile"><label>Spoiled crates</label><b>' + st.spoiled + '</b></div>' +
+      '<div class="tile"><label>Revenue</label><b>' + money(st.revenue) + '</b></div></div>' +
+      '<p class="sub">Stockout: an order expired while a crate it needed was nowhere in your storage or at the dock.</p>' +
+      '<div class="row"><button class="btn" type="button" id="btn-again">Run it again</button></div>';
+  }
+  return '';
+}
+function syncOverlay() {
+  const ov = $('#ov'), show = S.phase !== 'play' || S.paused;
+  const key = S.phase + '|' + S.paused + '|' + S.round + '|' + S.cash + '|' + JSON.stringify(S.up);
+  if (!show) { ov.hidden = true; ovKey = ''; return; }
+  if (key !== ovKey) { $('#ovp').innerHTML = overlayHTML(); ovKey = key; ov.scrollTop = 0; }
+  ov.hidden = false;
+}
+
+/* ---------- Input ---------- */
+function parseSrc(el) {
+  return el.dataset.src === 'slot' ? { kind: 'slot', i: +el.dataset.i } : { kind: 'truck', tid: +el.dataset.tid, i: +el.dataset.i };
+}
+function destOf(el) {
+  const d = el && el.closest && el.closest('[data-drop]'); if (!d) return null;
+  return d.dataset.drop === 'slot' ? { kind: 'slot', i: +d.dataset.i, el: d } : { kind: 'order', oid: +d.dataset.oid, el: d };
+}
+function clearHot() { document.querySelectorAll('.hot').forEach(e => e.classList.remove('hot')); }
+
+document.addEventListener('pointerdown', e => {
+  if (S.phase !== 'play' || S.paused || (e.button !== undefined && e.button !== 0)) return;
+  const el = e.target.closest('[data-crate]'); if (!el) return;
+  drag = { src: parseSrc(el), el, x0: e.clientX, y0: e.clientY, ghost: null, id: e.pointerId };
+});
+window.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.ghost && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 8) {
+    const c = crateAt(drag.src);
+    if (!c || c.spoiled) { drag = null; return; }
+    const g = drag.el.cloneNode(true);
+    g.removeAttribute('data-crate'); g.classList.remove('sel'); g.classList.add('ghost');
+    g.style.width = g.style.height = drag.el.offsetWidth + 'px';
+    document.body.appendChild(g); drag.ghost = g;
+    S.selected = drag.src; markUI(); sfx.pick();
+  }
+  if (drag.ghost) {
+    const w = drag.ghost.offsetWidth;
+    drag.ghost.style.left = (e.clientX - w / 2) + 'px'; drag.ghost.style.top = (e.clientY - w / 2) + 'px';
+    clearHot();
+    const d = destOf(document.elementFromPoint(e.clientX, e.clientY));
+    if (d && d.el.classList.contains('ok')) d.el.classList.add('hot');
+  }
+});
+function endDrag(e, cancel) {
+  if (!drag || (e && e.pointerId !== drag.id)) return;
+  const d = drag; drag = null;
+  if (d.ghost) {
+    d.ghost.remove(); clearHot();
+    if (!cancel) { const dest = destOf(document.elementFromPoint(e.clientX, e.clientY)); if (dest) act(d.src, dest); }
+    S.selected = null; dirty = true; markUI();
+    justDragged = true; setTimeout(() => { justDragged = false; }, 60);
+    return;
+  }
+  if (cancel) { dirty = true; return; }
+  const c = crateAt(d.src);
+  if (c && c.spoiled && d.src.kind === 'slot') { dumpCrate(d.src.i); return; }
+  if (c) { S.selected = sameSrc(S.selected, d.src) ? null : d.src; if (S.selected) sfx.pick(); markUI(); }
+  dirty = true;
+}
+window.addEventListener('pointerup', e => endDrag(e, false));
+window.addEventListener('pointercancel', e => endDrag(e, true));
+
+document.addEventListener('click', e => {
+  const un = e.target.closest('[data-unload]');
+  if (un && S.phase === 'play' && !S.paused) { unloadAll(+un.dataset.unload); return; }
+  if (justDragged || S.phase !== 'play' || S.paused) return;
+  if (e.target.closest('[data-crate]')) return;
+  const dest = destOf(e.target);
+  if (dest && S.selected) act(S.selected, dest);
+});
+$('#ov').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'btn-start') newGame();
+  else if (b.id === 'btn-resume') { S.paused = false; syncOverlay(); }
+  else if (b.id === 'btn-next') startRound();
+  else if (b.id === 'btn-again' || b.id === 'btn-restart') newGame();
+  else if (b.dataset.buy) {
+    const u = UPS.find(u => u.id === b.dataset.buy), n = S.up[u.id], c = u.cost(n);
+    if (n < u.max && S.cash >= c) {
+      S.cash -= c; S.up[u.id]++;
+      if (u.id === 'rack') for (let k = 0; k < 4; k++) S.slots.push(null);
+      sfx.buy(); dirty = true; syncOverlay();
+    }
+  }
+});
+function togglePause() {
+  if (S.phase !== 'play') return;
+  S.paused = !S.paused; syncOverlay();
+}
+$('#btn-pause').addEventListener('click', togglePause);
+$('#btn-restart-hud').addEventListener('click', () => { if (S.phase === 'play' && !S.paused) { S.paused = true; syncOverlay(); } else if (S.phase === 'play') { newGame(); } });
+$('#btn-mute').addEventListener('click', () => { muted = !muted; $('#btn-mute').textContent = muted ? 'Sound off' : 'Sound on'; });
+document.addEventListener('keydown', e => { if (e.key === 'p' || e.key === 'P') togglePause(); if (e.key === 'Escape' && S.selected) { S.selected = null; markUI(); } });
+document.addEventListener('visibilitychange', () => { if (document.hidden && S.phase === 'play' && !S.paused) { S.paused = true; syncOverlay(); } });
+
+/* ---------- Loop ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (S.phase === 'play' && !S.paused) step(dt);
+  if (dirty && !drag) { renderStructure(); dirty = false; }
+  updateDynamic();
+  requestAnimationFrame(frame);
+}
+
+function start(data) {
+  try {
+    if (data && data.S && data.S.phase) { S = data.S; if (S.phase === 'play') S.paused = true; S.selected = null; }
+  } catch (e) { S = fresh(); }
+  dirty = true; syncOverlay(); requestAnimationFrame(frame);
+}
+try { window.claude?.hot?.snapshot?.(() => ({ S: JSON.parse(JSON.stringify(S)) })); } catch (e) {}
+window.__scp = { get S() { return S; }, step, act, newGame };
+window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+</script>
+</body>
+</html>
